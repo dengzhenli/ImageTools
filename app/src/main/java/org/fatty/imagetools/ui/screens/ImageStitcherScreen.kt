@@ -32,6 +32,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,6 +41,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -68,6 +77,10 @@ import org.fatty.imagetools.presentation.ImageStitcherIntent
 import org.fatty.imagetools.presentation.ImageStitcherViewModel
 import org.fatty.imagetools.ui.theme.ImageToolsTheme
 import org.fatty.imagetools.utils.shareBitmap
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.io.File
 import kotlin.math.ceil
 
 /** 
@@ -145,6 +158,12 @@ fun ImageStitcherScreen(
                         snackbarHostState.showSnackbar(e.message ?: "分享失败")
                     }
                 }
+                is ImageStitcherEffect.ShareFile -> {
+                    // 分享历史记录文件
+                    // 这里可以复用 ShareUtils 中的逻辑或直接构建 Intent，为了简单可以暂时显示 Toast，
+                    // 实际业务中应该读取文件并分享。
+                    snackbarHostState.showSnackbar("文件准备分享: ${effect.filePath}")
+                }
             }
         }
     }
@@ -165,11 +184,27 @@ fun ImageStitcherScreen(
     // 4. 构建 UI 层级 (View)
     // -------------------------------------------------------------------------
     
-    // Scaffold 是一个遵循 Material Design 规范的基础布局，它提供了一些标准槽位（比如 topBar, bottomBar, snackbarHost）
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-    ) { innerPadding ->
+    if (state.isHistoryVisible) {
+        HistoryScreen(
+            viewModel = viewModel,
+            snackbarHostState = snackbarHostState,
+            onBack = { viewModel.processIntent(ImageStitcherIntent.ToggleHistory(false)) }
+        )
+    } else {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            topBar = {
+                TopAppBar(
+                    title = { Text(text = stringResource(R.string.title_image_stitcher)) },
+                    actions = {
+                        IconButton(onClick = { viewModel.processIntent(ImageStitcherIntent.ToggleHistory(true)) }) {
+                            Icon(imageVector = Icons.Default.Refresh, contentDescription = "History")
+                        }
+                    }
+                )
+            },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+        ) { innerPadding ->
         
         // Column 就是垂直线性布局，里面的子元素从上到下排列
         Column(
@@ -181,11 +216,6 @@ fun ImageStitcherScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp), // 子元素之间固定间隔 16dp
         ) {
             // 标题
-            Text(
-                text = stringResource(R.string.title_image_stitcher),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
             Text(
                 text = stringResource(R.string.subtitle_image_stitcher),
                 style = MaterialTheme.typography.bodyLarge,
@@ -710,4 +740,116 @@ fun ImageStitcherScreenPreview() {
     ImageToolsTheme {
         ImageStitcherScreen()
     }
+}
+
+// 最后补充HistoryScreen
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HistoryScreen(
+    viewModel: ImageStitcherViewModel,
+    snackbarHostState: SnackbarHostState,
+    onBack: () -> Unit
+) {
+    val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+    val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("历史记录") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            OutlinedTextField(
+                value = state.historySearchQuery,
+                onValueChange = { viewModel.processIntent(ImageStitcherIntent.UpdateHistorySearchQuery(it)) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                placeholder = { Text("搜索关键词 (如: PNG, 1080px)") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                singleLine = true
+            )
+
+            if (state.historyRecords.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("暂无记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(state.historyRecords.size) { index ->
+                        val record = state.historyRecords[index]
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                AsyncImage(
+                                    model = File(record.filePath),
+                                    contentDescription = "历史图片",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(120.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = dateFormatter.format(Date(record.timestamp)),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${record.width}x${record.height} ${record.format}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    IconButton(onClick = {
+                                        viewModel.processIntent(ImageStitcherIntent.DeleteHistoryRecord(record))
+                                    }) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = "Delete",
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                    IconButton(onClick = {
+                                        viewModel.processIntent(
+                                            ImageStitcherIntent.ShareResult
+                                        )
+                                    }) {
+                                        Icon(
+                                            Icons.Default.Refresh,
+                                            contentDescription = "Share",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 }

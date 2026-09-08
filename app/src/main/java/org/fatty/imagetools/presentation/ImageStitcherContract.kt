@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import org.fatty.imagetools.data.db.HistoryRecord
 import org.fatty.imagetools.domain.ExportFormat
 
 /**
@@ -35,7 +36,12 @@ data class ImageStitcherState(
     val resultBitmap: Bitmap? = null,          // 拼接完成后生成的图片
     val isGenerating: Boolean = false,         // 是否正在生成图片（用于显示 Loading）
     val isSaving: Boolean = false,             // 是否正在保存图片
-    val isSharing: Boolean = false             // 是否正在分享图片
+    val isSharing: Boolean = false,            // 是否正在分享图片
+
+    // 历史记录相关状态
+    val isHistoryVisible: Boolean = false,     // 是否显示历史记录弹窗/页面
+    val historySearchQuery: String = "",       // 历史记录的搜索关键词
+    val historyRecords: List<HistoryRecord> = emptyList() // 历史记录列表
 ) {
     // 根据当前状态计算得出的一些辅助属性，方便 UI 直接使用
     val maxColumns: Int get() = selectedUris.size.coerceAtLeast(1)
@@ -83,6 +89,11 @@ sealed interface ImageStitcherIntent {
     object GenerateResult : ImageStitcherIntent // 用户点击"生成结果"
     object SaveResult : ImageStitcherIntent     // 用户点击"保存到相册"
     object ShareResult : ImageStitcherIntent    // 用户点击"分享"
+
+    // 历史记录意图
+    data class ToggleHistory(val visible: Boolean) : ImageStitcherIntent // 切换历史记录页面的可见性
+    data class UpdateHistorySearchQuery(val query: String) : ImageStitcherIntent // 更新历史记录搜索词
+    data class DeleteHistoryRecord(val record: HistoryRecord) : ImageStitcherIntent // 删除单条历史记录
 }
 
 /**
@@ -95,4 +106,5 @@ sealed interface ImageStitcherEffect {
     data class ShowSnackbar(val messageResId: Int, val formatArgs: List<Any> = emptyList()) : ImageStitcherEffect // 显示提示文本（使用资源ID）
     data class ShowSnackbarText(val message: String) : ImageStitcherEffect // 显示纯文本提示
     data class ShareBitmap(val bitmap: Bitmap, val format: ExportFormat, val quality: Int) : ImageStitcherEffect // 调起系统分享
+    data class ShareFile(val filePath: String, val format: ExportFormat) : ImageStitcherEffect // 分享历史记录文件
 }

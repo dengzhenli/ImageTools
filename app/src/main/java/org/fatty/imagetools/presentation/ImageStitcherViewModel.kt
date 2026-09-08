@@ -5,40 +5,68 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.fatty.imagetools.R
+import org.fatty.imagetools.data.db.AppDatabase
+import org.fatty.imagetools.data.db.HistoryRecord
+import org.fatty.imagetools.data.repository.HistoryRepository
 import org.fatty.imagetools.domain.StitchOptions
 import org.fatty.imagetools.domain.stitchImages
 import org.fatty.imagetools.domain.saveBitmapToGallery
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * ViewModel 负责管理 State 并处理 Intent。
- *
- * 为什么用 AndroidViewModel？
- * 因为我们在处理图片拼接 (stitchImages) 和保存 (saveBitmapToGallery) 时需要用到 Context。
- * AndroidViewModel 默认持有一个 Application 级别的 Context，既满足需求，又不会像 Activity Context 那样容易引起内存泄漏。
  */
+@OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class ImageStitcherViewModel(application: Application) : AndroidViewModel(application) {
 
     // _state 是内部可变的 StateFlow，确保只有 ViewModel 能够修改状态
     private val _state = MutableStateFlow(ImageStitcherState())
-    
-    // state 是暴露给外部（UI层）的只读 StateFlow，UI 只能观察它，不能直接修改它
     val state: StateFlow<ImageStitcherState> = _state.asStateFlow()
 
-    // _effect 用于发送一次性事件（如弹 Toast、分享）。SharedFlow 适合处理事件，因为它不会像 StateFlow 那样保留最新的值。
+    // _effect 用于发送一次性事件
     private val _effect = MutableSharedFlow<ImageStitcherEffect>()
     val effect: SharedFlow<ImageStitcherEffect> = _effect.asSharedFlow()
 
-    // Context 提供给内部耗时任务使用
     private val context get() = getApplication<Application>()
+
+    // 历史记录存储库
+    private val historyRepository: HistoryRepository
+
+    // 用于冷流防抖搜索的 Flow
+    private val _searchQueryFlow = MutableStateFlow("")
+
+    init {
+        val database = AppDatabase.getDatabase(context)
+        historyRepository = HistoryRepository(database.historyDao())
+
+        // 收集搜索流，并更新到 State 中
+        viewModelScope.launch {
+            _searchQueryFlow
+                .debounce(300) // 冷流防抖：300ms内没有新输入才执行搜索
+                .distinctUntilChanged()
+                .flatMapLatest { query ->
+                    historyRepository.getHistoryFlow(query)
+                }
+                .collect { records ->
+                    _state.update { it.copy(historyRecords = records) }
+                }
+        }
+    }
 
     /**
      * 接收并处理来自 UI 的所有 Intent
@@ -59,6 +87,30 @@ class ImageStitcherViewModel(application: Application) : AndroidViewModel(applic
             is ImageStitcherIntent.GenerateResult -> generateResult()
             is ImageStitcherIntent.SaveResult -> saveResult()
             is ImageStitcherIntent.ShareResult -> shareResult()
+
+            is ImageStitcherIntent.ToggleHistory -> _state.update { it.copy(isHistoryVisible = intent.visible) }
+            is ImageStitcherIntent.UpdateHistorySearchQuery -> handleSearchQueryUpdate(intent.query)
+            is ImageStitcherIntent.DeleteHistoryRecord -> deleteHistoryRecord(intent.record)
+        }
+    }
+
+    private fun handleSearchQueryUpdate(query: String) {
+        _state.update { it.copy(historySearchQuery = query) }
+        _searchQueryFlow.value = query // 触发冷流防抖搜索
+    }
+
+    private fun deleteHistoryRecord(record: HistoryRecord) {
+        viewModelScope.launch {
+            try {
+                val file = File(record.filePath)
+                if (file.exists()) {
+                    file.delete()
+                }
+                historyRepository.deleteRecord(record)
+                emitEffect(ImageStitcherEffect.ShowSnackbarText("删除成功"))
+            } catch (e: Exception) {
+                emitEffect(ImageStitcherEffect.ShowSnackbarText("删除失败: ${e.message}"))
+            }
         }
     }
 
@@ -132,6 +184,9 @@ class ImageStitcherViewModel(application: Application) : AndroidViewModel(applic
 
                 val newBitmap = stitchImages(context, currentState.selectedUris, options)
                 
+                // 异步保存一份本地历史记录
+                saveHistoryRecord(newBitmap, currentState)
+
                 // 回收旧 Bitmap
                 recycleBitmap(currentState.resultBitmap)
                 
@@ -145,6 +200,34 @@ class ImageStitcherViewModel(application: Application) : AndroidViewModel(applic
                 _state.update { it.copy(isGenerating = false) }
                 emitEffect(ImageStitcherEffect.ShowSnackbarText(error.message ?: context.getString(R.string.generating_result)))
             }
+        }
+    }
+
+    private suspend fun saveHistoryRecord(bitmap: Bitmap, state: ImageStitcherState) {
+        try {
+            val historyDir = File(context.filesDir, "history_images").apply { mkdirs() }
+            val fileName = "history_${System.currentTimeMillis()}.${state.exportFormat.extension}"
+            val outputFile = File(historyDir, fileName)
+
+            FileOutputStream(outputFile).use { outputStream ->
+                bitmap.compress(state.exportFormat.compressFormat, 80, outputStream) // 压缩80%存储作为历史
+            }
+
+            val tags = "${state.appliedColumns}列 ${state.selectedMaxWidth}px ${state.exportFormat.name} ${state.selectedUris.size}张"
+            
+            val record = HistoryRecord(
+                filePath = outputFile.absolutePath,
+                timestamp = System.currentTimeMillis(),
+                imageCount = state.selectedUris.size,
+                columns = state.appliedColumns,
+                format = state.exportFormat.name,
+                width = bitmap.width,
+                height = bitmap.height,
+                searchTags = tags
+            )
+            historyRepository.insertRecord(record)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
