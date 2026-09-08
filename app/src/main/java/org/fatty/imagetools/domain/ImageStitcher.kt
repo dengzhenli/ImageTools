@@ -1,4 +1,4 @@
-package org.fatty.imagetools
+package org.fatty.imagetools.domain
 
 import android.content.ContentValues
 import android.content.Context

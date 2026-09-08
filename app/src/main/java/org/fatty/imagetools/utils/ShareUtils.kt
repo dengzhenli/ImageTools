@@ -1,4 +1,4 @@
-package org.fatty.imagetools
+package org.fatty.imagetools.utils
 
 import android.content.Context
 import android.content.Intent
@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import org.fatty.imagetools.domain.ExportFormat
 
 suspend fun shareBitmap(
     context: Context,
