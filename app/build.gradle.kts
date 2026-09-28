@@ -67,4 +67,7 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    // mxlogger
+    implementation("io.github.coder-dongjiayi:mxlogger:latest.release")
 }
