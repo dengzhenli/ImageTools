@@ -14,7 +14,7 @@ object ALog {
     private const val LOG_NAME = "alog"
     private const val NAMESPACE = "org.fatty.imagetools"
     private const val FILE_NAME = "mxlog"
-    private const val FILE_HEADER = "{\"app_version\":\"2.0.0\"}"
+    private const val FILE_HEADER = "{\"app_version\":\"${BuildConfig.VERSION_NAME}\"}"
     // MXLogger currently accepts a raw symmetric key. Replace this with a keystore-backed
     // provider when the library supports non-exportable Android Keystore keys.
     private const val CRYPT_KEY = "jsgfbhvjdhfngmnf"
