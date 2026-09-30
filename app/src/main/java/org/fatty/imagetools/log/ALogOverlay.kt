@@ -17,7 +17,7 @@ class ALogOverlay {
     fun showBubble(activity: Activity) {
         overlay.showBubble(
             activity = activity,
-            logs = ALog.visibleLogs.map { lines -> lines.map(::formatLine) },
+            logs = ALog.visibleLogs.map { lines -> lines.map(::toOverlayLine) },
             onClear = ALog::clearVisibleLogs,
         )
     }
@@ -30,8 +30,16 @@ class ALogOverlay {
 
     fun dismiss() = overlay.dismiss()
 
-    private fun formatLine(line: ALog.LogLine): String {
+    private fun toOverlayLine(line: ALog.LogLine): OverlayLogLine {
         val time = synchronized(timeFormatter) { timeFormatter.format(Date(line.timeMillis)) }
-        return "$time ${line.level}/${line.tag}: ${line.message}"
+        return OverlayLogLine(
+            text = "$time ${line.level}/${line.tag}: ${line.message}",
+            level = when (line.level) {
+                "D" -> OverlayLogLevel.DEBUG
+                "I" -> OverlayLogLevel.INFO
+                "W" -> OverlayLogLevel.WARN
+                else -> OverlayLogLevel.ERROR
+            },
+        )
     }
 }

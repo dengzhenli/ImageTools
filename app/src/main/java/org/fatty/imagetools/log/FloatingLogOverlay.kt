@@ -3,6 +3,8 @@ package org.fatty.imagetools.log
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -17,6 +19,18 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
+enum class OverlayLogLevel {
+    DEBUG,
+    INFO,
+    WARN,
+    ERROR,
+}
+
+data class OverlayLogLine(
+    val text: String,
+    val level: OverlayLogLevel,
+)
+
 /**
  * A debug-only floating log viewer. The owner must call [dismiss] with its lifecycle.
  * It accepts plain text formatting so this library stays independent of the host app's logger.
@@ -26,12 +40,12 @@ class FloatingLogOverlay {
     private var bubbleView: View? = null
     private var panelView: View? = null
     private var renderJob: Job? = null
-    private var formattedLogs: Flow<List<String>>? = null
+    private var formattedLogs: Flow<List<OverlayLogLine>>? = null
     private var onClear: (() -> Unit)? = null
 
     fun showBubble(
         activity: Activity,
-        logs: Flow<List<String>>,
+        logs: Flow<List<OverlayLogLine>>,
         onClear: () -> Unit,
     ) {
         if (bubbleView != null) return
@@ -96,7 +110,7 @@ class FloatingLogOverlay {
         panelView = root
         renderJob = CoroutineScope(Dispatchers.Main.immediate).launch {
             logs.collectLatest { entries ->
-                logText.text = entries.joinToString("\n")
+                logText.text = buildColoredLogText(entries)
                 scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
             }
         }
@@ -113,6 +127,29 @@ class FloatingLogOverlay {
         }, LinearLayout.LayoutParams(0, -1, 1f))
         addView(action(activity, "清空", onClear))
         addView(action(activity, "×", ::hidePanel))
+    }
+
+    private fun buildColoredLogText(entries: List<OverlayLogLine>): SpannableStringBuilder {
+        return SpannableStringBuilder().apply {
+            entries.forEachIndexed { index, entry ->
+                val start = length
+                append(entry.text)
+                setSpan(
+                    ForegroundColorSpan(colorFor(entry.level)),
+                    start,
+                    length,
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+                if (index != entries.lastIndex) append('\n')
+            }
+        }
+    }
+
+    private fun colorFor(level: OverlayLogLevel): Int = when (level) {
+        OverlayLogLevel.DEBUG -> 0xFFB0B7C3.toInt()
+        OverlayLogLevel.INFO -> 0xFF81C995.toInt()
+        OverlayLogLevel.WARN -> 0xFFFFC857.toInt()
+        OverlayLogLevel.ERROR -> 0xFFFF6B6B.toInt()
     }
 
     private fun action(activity: Activity, label: String, onClick: () -> Unit) = TextView(activity).apply {
