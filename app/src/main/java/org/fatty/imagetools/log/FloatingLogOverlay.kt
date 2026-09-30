@@ -100,9 +100,10 @@ class FloatingLogOverlay {
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
-                setColor(0x80000000.toInt())
+                setColor(0xB8000000.toInt())
                 cornerRadius = dp(activity, 10).toFloat()
             }
+            clipToOutline = true
             addView(createHeader(activity, onClear ?: {}), LinearLayout.LayoutParams(-1, dp(activity, 34)))
             addView(scrollView, LinearLayout.LayoutParams(-1, 0, 1f))
         }
@@ -119,7 +120,11 @@ class FloatingLogOverlay {
     private fun createHeader(activity: Activity, onClear: () -> Unit): View = LinearLayout(activity).apply {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(activity, 10), 0, dp(activity, 4), 0)
-        setBackgroundColor(0xFF202124.toInt())
+        background = GradientDrawable().apply {
+            setColor(0xD912161D.toInt())
+            val radius = dp(activity, 10).toFloat()
+            cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
+        }
         addView(TextView(activity).apply {
             text = "MXLog 实时日志"
             setTextColor(0xFF81C995.toInt())
