@@ -6,7 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import org.fatty.imagetools.ui.screens.ImageStitcherScreen
 import org.fatty.imagetools.ui.theme.ImageToolsTheme
-import org.fatty.imagetools.utils.ALog
+import org.fatty.imagetools.log.ALog
 
 class MainActivity : ComponentActivity() {
     private companion object {
