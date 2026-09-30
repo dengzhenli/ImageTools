@@ -19,6 +19,9 @@ import org.fatty.imagetools.BuildConfig
 import java.lang.ref.WeakReference
 
 object ALog {
+    /** Set false in projects that handle the log UI themselves. */
+    const val AUTO_SHOW_LOG_BUBBLE = true
+
     private const val LOG_NAME = "alog"
     private const val NAMESPACE = "org.fatty.imagetools"
     private const val FILE_NAME = "mxlog"
@@ -71,7 +74,9 @@ object ALog {
             withLogger { Log.d("MXLogger", "日志目录 ${it.diskCachePath}") }
         }
         registerCleanupObserver()
-        registerOverlayLifecycle(context.applicationContext as? Application)
+        if (AUTO_SHOW_LOG_BUBBLE) {
+            registerOverlayLifecycle(context.applicationContext as? Application)
+        }
     }
 
     fun d(tag: String, msg: String) = write("D", tag, msg) { debug(tag, LOG_NAME, msg) }
