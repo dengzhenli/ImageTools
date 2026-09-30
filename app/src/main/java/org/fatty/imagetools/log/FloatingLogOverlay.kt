@@ -1,6 +1,7 @@
 package org.fatty.imagetools.log
 
 import android.app.Activity
+import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.text.SpannableStringBuilder
@@ -81,30 +82,30 @@ class FloatingLogOverlay {
     fun showPanel() {
         if (panelView != null) return
         val host = hostView ?: return
-        val activity = host.context as? Activity ?: return
+        val context = host.context
         val logs = formattedLogs ?: return
-        val params = FrameLayout.LayoutParams(dp(activity, 340), dp(activity, 250)).apply {
+        val params = FrameLayout.LayoutParams(dp(context, 340), dp(context, 250)).apply {
             gravity = Gravity.BOTTOM or Gravity.START
-            leftMargin = dp(activity, 12)
-            bottomMargin = dp(activity, 24)
+            leftMargin = dp(context, 12)
+            bottomMargin = dp(context, 24)
         }
-        val logText = TextView(activity).apply {
+        val logText = TextView(context).apply {
             setTextColor(Color.WHITE)
             textSize = 11f
-            setPadding(dp(activity, 8), dp(activity, 6), dp(activity, 8), dp(activity, 6))
+            setPadding(dp(context, 8), dp(context, 6), dp(context, 8), dp(context, 6))
             setTextIsSelectable(true)
         }
-        val scrollView = ScrollView(activity).apply {
+        val scrollView = ScrollView(context).apply {
             addView(logText, LinearLayout.LayoutParams(-1, -2))
         }
-        val root = LinearLayout(activity).apply {
+        val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 setColor(0xB8000000.toInt())
-                cornerRadius = dp(activity, 10).toFloat()
+                cornerRadius = dp(context, 10).toFloat()
             }
             clipToOutline = true
-            addView(createHeader(activity, onClear ?: {}), LinearLayout.LayoutParams(-1, dp(activity, 34)))
+            addView(createHeader(context, onClear ?: {}), LinearLayout.LayoutParams(-1, dp(context, 34)))
             addView(scrollView, LinearLayout.LayoutParams(-1, 0, 1f))
         }
         host.addView(root, params)
@@ -117,21 +118,21 @@ class FloatingLogOverlay {
         }
     }
 
-    private fun createHeader(activity: Activity, onClear: () -> Unit): View = LinearLayout(activity).apply {
+    private fun createHeader(context: Context, onClear: () -> Unit): View = LinearLayout(context).apply {
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(activity, 10), 0, dp(activity, 4), 0)
+        setPadding(dp(context, 10), 0, dp(context, 4), 0)
         background = GradientDrawable().apply {
             setColor(0xD912161D.toInt())
-            val radius = dp(activity, 10).toFloat()
+            val radius = dp(context, 10).toFloat()
             cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
         }
-        addView(TextView(activity).apply {
+        addView(TextView(context).apply {
             text = "MXLog 实时日志"
             setTextColor(0xFF81C995.toInt())
             textSize = 12f
         }, LinearLayout.LayoutParams(0, -1, 1f))
-        addView(action(activity, "清空", onClear))
-        addView(action(activity, "×", ::hidePanel))
+        addView(action(context, "清空", onClear))
+        addView(action(context, "×", ::hidePanel))
     }
 
     private fun buildColoredLogText(entries: List<OverlayLogLine>): SpannableStringBuilder {
@@ -157,12 +158,12 @@ class FloatingLogOverlay {
         OverlayLogLevel.ERROR -> 0xFFFF6B6B.toInt()
     }
 
-    private fun action(activity: Activity, label: String, onClick: () -> Unit) = TextView(activity).apply {
+    private fun action(context: Context, label: String, onClick: () -> Unit) = TextView(context).apply {
         text = label
         gravity = Gravity.CENTER
         setTextColor(Color.WHITE)
         textSize = 12f
-        setPadding(dp(activity, 8), 0, dp(activity, 8), 0)
+        setPadding(dp(context, 8), 0, dp(context, 8), 0)
         setOnClickListener { onClick() }
     }
 
@@ -186,5 +187,5 @@ class FloatingLogOverlay {
         hostView = null
     }
 
-    private fun dp(activity: Activity, value: Int) = (value * activity.resources.displayMetrics.density).toInt()
+    private fun dp(context: Context, value: Int) = (value * context.resources.displayMetrics.density).toInt()
 }
