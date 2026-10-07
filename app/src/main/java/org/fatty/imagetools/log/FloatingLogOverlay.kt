@@ -4,11 +4,14 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.text.Editable
 import android.text.SpannableStringBuilder
+import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -43,6 +46,8 @@ class FloatingLogOverlay {
     private var renderJob: Job? = null
     private var formattedLogs: Flow<List<OverlayLogLine>>? = null
     private var onClear: (() -> Unit)? = null
+    private var selectedLevel: OverlayLogLevel? = null
+    private var query = ""
 
     fun showBubble(
         activity: Activity,
@@ -84,7 +89,7 @@ class FloatingLogOverlay {
         val host = hostView ?: return
         val context = host.context
         val logs = formattedLogs ?: return
-        val params = FrameLayout.LayoutParams(dp(context, 340), dp(context, 250)).apply {
+        val params = FrameLayout.LayoutParams(dp(context, 340), dp(context, 290)).apply {
             gravity = Gravity.BOTTOM or Gravity.START
             leftMargin = dp(context, 12)
             bottomMargin = dp(context, 24)
@@ -98,6 +103,42 @@ class FloatingLogOverlay {
         val scrollView = ScrollView(context).apply {
             addView(logText, LinearLayout.LayoutParams(-1, -2))
         }
+        var currentEntries: List<OverlayLogLine> = emptyList()
+        val render = {
+            val normalizedQuery = query.trim()
+            val filteredEntries = currentEntries.filter { entry ->
+                (selectedLevel == null || entry.level == selectedLevel) &&
+                    (normalizedQuery.isEmpty() || entry.text.contains(normalizedQuery, ignoreCase = true))
+            }
+            logText.text = buildColoredLogText(filteredEntries)
+            scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
+        }
+        val filterBar = createFilterBar(context) { level ->
+            selectedLevel = level
+            render()
+        }
+        val searchInput = EditText(context).apply {
+            hint = "筛选关键字（标签或内容）"
+            setHintTextColor(0xFF9AA0AA.toInt())
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            setSingleLine()
+            setPadding(dp(context, 10), 0, dp(context, 10), 0)
+            background = GradientDrawable().apply {
+                setColor(0x332A3038)
+                cornerRadius = dp(context, 6).toFloat()
+            }
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    query = s?.toString().orEmpty()
+                    render()
+                }
+
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
+        }
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
@@ -106,14 +147,20 @@ class FloatingLogOverlay {
             }
             clipToOutline = true
             addView(createHeader(context, onClear ?: {}), LinearLayout.LayoutParams(-1, dp(context, 34)))
+            addView(filterBar, LinearLayout.LayoutParams(-1, dp(context, 36)))
+            addView(searchInput, LinearLayout.LayoutParams(-1, dp(context, 36)).apply {
+                leftMargin = dp(context, 8)
+                rightMargin = dp(context, 8)
+                bottomMargin = dp(context, 4)
+            })
             addView(scrollView, LinearLayout.LayoutParams(-1, 0, 1f))
         }
         host.addView(root, params)
         panelView = root
         renderJob = CoroutineScope(Dispatchers.Main.immediate).launch {
             logs.collectLatest { entries ->
-                logText.text = buildColoredLogText(entries)
-                scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
+                currentEntries = entries
+                render()
             }
         }
     }
@@ -151,6 +198,54 @@ class FloatingLogOverlay {
         }
     }
 
+    private fun createFilterBar(
+        context: Context,
+        onLevelSelected: (OverlayLogLevel?) -> Unit,
+    ): View {
+        val container = LinearLayout(context).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(context, 8), 0, dp(context, 8), 0)
+        }
+        val filters = listOf(
+            "全部" to null,
+            "D" to OverlayLogLevel.DEBUG,
+            "I" to OverlayLogLevel.INFO,
+            "W" to OverlayLogLevel.WARN,
+            "E" to OverlayLogLevel.ERROR,
+        )
+        val buttons = mutableListOf<TextView>()
+        filters.forEach { (label, level) ->
+            lateinit var button: TextView
+            button = action(context, label) {
+                selectedLevel = level
+                buttons.forEach { it.isSelected = false }
+                button.isSelected = true
+                onLevelSelected(level)
+            }.apply {
+                setPadding(dp(context, 10), 0, dp(context, 10), 0)
+                background = filterBackground(context)
+                isSelected = selectedLevel == level
+            }
+            buttons += button
+            container.addView(button, LinearLayout.LayoutParams(0, dp(context, 28), 1f).apply {
+                leftMargin = dp(context, 2)
+                rightMargin = dp(context, 2)
+            })
+        }
+        return container
+    }
+
+    private fun filterBackground(context: Context) = android.graphics.drawable.StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_selected), GradientDrawable().apply {
+            setColor(0xFF2E7D32.toInt())
+            cornerRadius = dp(context, 6).toFloat()
+        })
+        addState(intArrayOf(), GradientDrawable().apply {
+            setColor(0x332A3038)
+            cornerRadius = dp(context, 6).toFloat()
+        })
+    }
+
     private fun colorFor(level: OverlayLogLevel): Int = when (level) {
         OverlayLogLevel.DEBUG -> 0xFFB0B7C3.toInt()
         OverlayLogLevel.INFO -> 0xFF81C995.toInt()
@@ -184,6 +279,8 @@ class FloatingLogOverlay {
         hideBubble()
         formattedLogs = null
         onClear = null
+        selectedLevel = null
+        query = ""
         hostView = null
     }
 
