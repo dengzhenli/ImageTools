@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.fatty.imagetools.BuildConfig
+import java.io.File
 import java.lang.ref.WeakReference
 
 object ALog {
@@ -136,6 +137,21 @@ object ALog {
 
     fun hideLogPanel() {
         overlayLifecycleManagerRef?.get()?.hidePanel()
+    }
+
+    /** Queues a persistent, network-constrained upload of the currently visible logs. */
+    fun enqueueLogUpload(context: Context) {
+        LogUploadScheduler.enqueue(context)
+    }
+
+    /** Returns MXLogger's on-disk log files for the background uploader. */
+    internal fun mxLogFilesForUpload(): List<File> {
+        if (!isReady) return emptyList()
+        return runCatching {
+            File(logger.diskCachePath).walkTopDown()
+                .filter { it.isFile && it.name.contains(FILE_NAME, ignoreCase = true) }
+                .toList()
+        }.getOrElse { emptyList() }
     }
 
     fun removeExpiredData() {
