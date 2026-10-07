@@ -34,9 +34,15 @@ object ALog {
     private lateinit var logger: MXLogger
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val logBuffer = ArrayDeque<LogLine>(MAX_VISIBLE_LOGS)
+    private val filterBuffers = mutableMapOf<Int, ArrayDeque<LogLine>>()
     private val _visibleLogs = MutableStateFlow<List<LogLine>>(emptyList())
+    private val _filterPresets = MutableStateFlow<List<LogFilterPreset>>(emptyList())
+    private val _presetLogs = MutableStateFlow<Map<Int, List<LogLine>>>(emptyMap())
     /** 供调试悬浮窗订阅的实时日志；只保留最近 [MAX_VISIBLE_LOGS] 条。 */
     val visibleLogs = _visibleLogs.asStateFlow()
+    val filterPresets = _filterPresets.asStateFlow()
+    val presetLogs = _presetLogs.asStateFlow()
+    private var nextFilterId = 1
     @Volatile private var isReady = false
     @Volatile private var lifecycleObserverRegistered = false
     @Volatile private var overlayLifecycleRegistered = false
@@ -92,8 +98,27 @@ object ALog {
     fun clearVisibleLogs() {
         synchronized(logBuffer) {
             logBuffer.clear()
+            filterBuffers.values.forEach(ArrayDeque<LogLine>::clear)
             _visibleLogs.value = emptyList()
+            _presetLogs.value = filterBuffers.mapValues { it.value.toList() }
         }
+    }
+
+    /** Creates an independent, forward-looking log buffer for a saved filter. */
+    fun addFilterPreset(level: String?, query: String): Int? = synchronized(logBuffer) {
+        if (_filterPresets.value.size >= MAX_FILTER_PRESETS) return null
+        val id = nextFilterId++
+        val preset = LogFilterPreset(id, level, query.trim())
+        _filterPresets.value = _filterPresets.value + preset
+        filterBuffers[id] = ArrayDeque(MAX_VISIBLE_LOGS)
+        _presetLogs.value = filterBuffers.mapValues { it.value.toList() }
+        id
+    }
+
+    fun removeFilterPreset(id: Int) = synchronized(logBuffer) {
+        _filterPresets.value = _filterPresets.value.filterNot { it.id == id }
+        filterBuffers.remove(id)
+        _presetLogs.value = filterBuffers.mapValues { it.value.toList() }
     }
 
     fun hideLogBubble() {
@@ -163,12 +188,31 @@ object ALog {
             if (logBuffer.size == MAX_VISIBLE_LOGS) logBuffer.removeFirst()
             logBuffer.addLast(LogLine(System.currentTimeMillis(), level, tag, message))
             _visibleLogs.value = logBuffer.toList()
+            val line = logBuffer.last()
+            var presetChanged = false
+            _filterPresets.value.forEach { preset ->
+                if (preset.matches(line)) {
+                    val buffer = filterBuffers.getOrPut(preset.id) { ArrayDeque(MAX_VISIBLE_LOGS) }
+                    if (buffer.size == MAX_VISIBLE_LOGS) buffer.removeFirst()
+                    buffer.addLast(line)
+                    presetChanged = true
+                }
+            }
+            if (presetChanged) _presetLogs.value = filterBuffers.mapValues { it.value.toList() }
         }
     }
 
     data class LogLine(val timeMillis: Long, val level: String, val tag: String, val message: String)
+    data class LogFilterPreset(val id: Int, val level: String?, val query: String) {
+        fun matches(line: LogLine): Boolean {
+            val levelMatches = level == null || level == line.level || (level == "E" && line.level == "F")
+            return levelMatches && (query.isEmpty() ||
+                line.tag.contains(query, ignoreCase = true) || line.message.contains(query, ignoreCase = true))
+        }
+    }
 
     private const val MAX_VISIBLE_LOGS = 200
+    private const val MAX_FILTER_PRESETS = 3
 
     /**
      * Registered from [init], so no screen needs to know about the log UI. The manager is

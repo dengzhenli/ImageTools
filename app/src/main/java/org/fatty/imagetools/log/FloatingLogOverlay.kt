@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.SpannableStringBuilder
 import android.text.TextWatcher
@@ -35,6 +37,8 @@ data class OverlayLogLine(
     val level: OverlayLogLevel,
 )
 
+data class OverlayLogFilterPreset(val level: OverlayLogLevel?, val query: String)
+
 /**
  * A debug-only floating log viewer. The owner must call [dismiss] with its lifecycle.
  * It accepts plain text formatting so this library stays independent of the host app's logger.
@@ -48,16 +52,28 @@ class FloatingLogOverlay {
     private var onClear: (() -> Unit)? = null
     private var selectedLevel: OverlayLogLevel? = null
     private var query = ""
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingRender: Runnable? = null
+    private var renderAction: (() -> Unit)? = null
+    private var onSaveFilter: ((OverlayLogLevel?, String) -> OverlayLogFilterPreset?)? = null
+    private var onNextFilter: (() -> OverlayLogFilterPreset?)? = null
+    private var onManageFilters: ((OverlayLogLevel?, String) -> Unit)? = null
 
     fun showBubble(
         activity: Activity,
         logs: Flow<List<OverlayLogLine>>,
         onClear: () -> Unit,
+        onSaveFilter: (OverlayLogLevel?, String) -> OverlayLogFilterPreset?,
+        onNextFilter: () -> OverlayLogFilterPreset?,
+        onManageFilters: (OverlayLogLevel?, String) -> Unit,
     ) {
         if (bubbleView != null) return
 
         formattedLogs = logs
         this.onClear = onClear
+        this.onSaveFilter = onSaveFilter
+        this.onNextFilter = onNextFilter
+        this.onManageFilters = onManageFilters
         val host = activity.findViewById<ViewGroup>(android.R.id.content)
         val bubble = createBubble(activity, ::showPanel)
         val params = FrameLayout.LayoutParams(dp(activity, 48), dp(activity, 48)).apply {
@@ -110,12 +126,15 @@ class FloatingLogOverlay {
                 (selectedLevel == null || entry.level == selectedLevel) &&
                     (normalizedQuery.isEmpty() || entry.text.contains(normalizedQuery, ignoreCase = true))
             }
+            val wasAtBottom = scrollView.scrollY + scrollView.height >=
+                (scrollView.getChildAt(0)?.height ?: 0) - dp(context, 16)
             logText.text = buildColoredLogText(filteredEntries)
-            scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
+            if (wasAtBottom) scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
         }
+        renderAction = render
         val filterBar = createFilterBar(context) { level ->
             selectedLevel = level
-            render()
+            renderNow()
         }
         val searchInput = EditText(context).apply {
             hint = "筛选关键字（标签或内容）"
@@ -123,6 +142,7 @@ class FloatingLogOverlay {
             setTextColor(Color.WHITE)
             textSize = 12f
             setSingleLine()
+            setText(query)
             setPadding(dp(context, 10), 0, dp(context, 10), 0)
             background = GradientDrawable().apply {
                 setColor(0x332A3038)
@@ -133,11 +153,17 @@ class FloatingLogOverlay {
 
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                     query = s?.toString().orEmpty()
-                    render()
+                    debounceRender(KEYWORD_DEBOUNCE_MS)
                 }
 
                 override fun afterTextChanged(s: Editable?) = Unit
             })
+        }
+        fun applyPreset(preset: OverlayLogFilterPreset?) {
+            if (preset == null) return
+            selectedLevel = preset.level
+            searchInput.setText(preset.query)
+            renderNow()
         }
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -146,7 +172,11 @@ class FloatingLogOverlay {
                 cornerRadius = dp(context, 10).toFloat()
             }
             clipToOutline = true
-            addView(createHeader(context, onClear ?: {}), LinearLayout.LayoutParams(-1, dp(context, 34)))
+            addView(createHeader(context, onClear ?: {},
+                onSave = { applyPreset(onSaveFilter?.invoke(selectedLevel, query)) },
+                onNext = { applyPreset(onNextFilter?.invoke()) },
+                onManage = { onManageFilters?.invoke(selectedLevel, query) },
+            ), LinearLayout.LayoutParams(-1, dp(context, 34)))
             addView(filterBar, LinearLayout.LayoutParams(-1, dp(context, 36)))
             addView(searchInput, LinearLayout.LayoutParams(-1, dp(context, 36)).apply {
                 leftMargin = dp(context, 8)
@@ -160,12 +190,18 @@ class FloatingLogOverlay {
         renderJob = CoroutineScope(Dispatchers.Main.immediate).launch {
             logs.collectLatest { entries ->
                 currentEntries = entries
-                render()
+                requestBatchedRender()
             }
         }
     }
 
-    private fun createHeader(context: Context, onClear: () -> Unit): View = LinearLayout(context).apply {
+    private fun createHeader(
+        context: Context,
+        onClear: () -> Unit,
+        onSave: () -> Unit,
+        onNext: () -> Unit,
+        onManage: () -> Unit,
+    ): View = LinearLayout(context).apply {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(context, 10), 0, dp(context, 4), 0)
         background = GradientDrawable().apply {
@@ -178,6 +214,9 @@ class FloatingLogOverlay {
             setTextColor(0xFF81C995.toInt())
             textSize = 12f
         }, LinearLayout.LayoutParams(0, -1, 1f))
+        addView(action(context, "管理", onManage))
+        addView(action(context, "保存", onSave))
+        addView(action(context, "预设", onNext))
         addView(action(context, "清空", onClear))
         addView(action(context, "×", ::hidePanel))
     }
@@ -270,6 +309,8 @@ class FloatingLogOverlay {
     fun hidePanel() {
         renderJob?.cancel()
         renderJob = null
+        cancelPendingRender()
+        renderAction = null
         panelView?.let { view -> hostView?.removeView(view) }
         panelView = null
     }
@@ -279,10 +320,46 @@ class FloatingLogOverlay {
         hideBubble()
         formattedLogs = null
         onClear = null
-        selectedLevel = null
-        query = ""
+        onSaveFilter = null
+        onNextFilter = null
+        onManageFilters = null
         hostView = null
     }
 
+    /** Limits expensive spannable rebuilding when a burst of logs arrives. */
+    private fun requestBatchedRender() {
+        if (pendingRender == null) scheduleRender(LOG_RENDER_INTERVAL_MS)
+    }
+
+    /** Waits until the user pauses typing before applying a text filter. */
+    private fun debounceRender(delayMillis: Long) {
+        cancelPendingRender()
+        scheduleRender(delayMillis)
+    }
+
+    private fun renderNow() {
+        cancelPendingRender()
+        renderAction?.invoke()
+    }
+
+    private fun scheduleRender(delayMillis: Long) {
+        val runnable = Runnable {
+            pendingRender = null
+            renderAction?.invoke()
+        }
+        pendingRender = runnable
+        mainHandler.postDelayed(runnable, delayMillis)
+    }
+
+    private fun cancelPendingRender() {
+        pendingRender?.let(mainHandler::removeCallbacks)
+        pendingRender = null
+    }
+
     private fun dp(context: Context, value: Int) = (value * context.resources.displayMetrics.density).toInt()
+
+    private companion object {
+        const val LOG_RENDER_INTERVAL_MS = 100L
+        const val KEYWORD_DEBOUNCE_MS = 300L
+    }
 }
