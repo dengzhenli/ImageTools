@@ -4,8 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.os.Handler
-import android.os.Looper
 import android.text.Editable
 import android.text.SpannableStringBuilder
 import android.text.TextWatcher
@@ -21,6 +19,8 @@ import android.widget.TextView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -52,8 +52,8 @@ class FloatingLogOverlay {
     private var onClear: (() -> Unit)? = null
     private var selectedLevel: OverlayLogLevel? = null
     private var query = ""
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var pendingRender: Runnable? = null
+    private val renderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var pendingRenderJob: Job? = null
     private var renderAction: (() -> Unit)? = null
     private var onSaveFilter: ((OverlayLogLevel?, String) -> OverlayLogFilterPreset?)? = null
     private var onNextFilter: (() -> OverlayLogFilterPreset?)? = null
@@ -328,7 +328,7 @@ class FloatingLogOverlay {
 
     /** Limits expensive spannable rebuilding when a burst of logs arrives. */
     private fun requestBatchedRender() {
-        if (pendingRender == null) scheduleRender(LOG_RENDER_INTERVAL_MS)
+        if (pendingRenderJob == null) scheduleRender(LOG_RENDER_INTERVAL_MS)
     }
 
     /** Waits until the user pauses typing before applying a text filter. */
@@ -343,17 +343,16 @@ class FloatingLogOverlay {
     }
 
     private fun scheduleRender(delayMillis: Long) {
-        val runnable = Runnable {
-            pendingRender = null
+        pendingRenderJob = renderScope.launch {
+            delay(delayMillis)
+            pendingRenderJob = null
             renderAction?.invoke()
         }
-        pendingRender = runnable
-        mainHandler.postDelayed(runnable, delayMillis)
     }
 
     private fun cancelPendingRender() {
-        pendingRender?.let(mainHandler::removeCallbacks)
-        pendingRender = null
+        pendingRenderJob?.cancel()
+        pendingRenderJob = null
     }
 
     private fun dp(context: Context, value: Int) = (value * context.resources.displayMetrics.density).toInt()
